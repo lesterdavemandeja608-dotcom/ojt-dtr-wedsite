@@ -1,0 +1,171 @@
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  font-family: Arial, Helvetica, sans-serif;
+  color: #243247;
+  background: #f3f6fb;
+  font-synthesis: none;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+.container {
+  width: min(100% - 28px, 1000px);
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+h1 {
+  color: #17365d;
+  font-size: 26px;
+  margin-top: 0;
+}
+
+h2 {
+  color: #17365d;
+  font-size: 20px;
+}
+
+h3 {
+  color: #17365d;
+}
+
+p {
+  line-height: 1.5;
+}
+
+.panel {
+  background: white;
+  border: 1px solid #e0e7f0;
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 18px;
+  box-shadow: 0 3px 12px rgba(20, 45, 78, 0.05);
+}
+
+label {
+  display: block;
+  font-weight: 600;
+  margin: 14px 0 6px;
+}
+
+input,
+select,
+textarea {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  font: inherit;
+  border: 1px solid #ccd5e2;
+  border-radius: 8px;
+  background: white;
+  color: #243247;
+  margin-bottom: 12px;
+}
+
+textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  background: #173f70;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 12px 16px;
+  margin: 6px 6px 6px 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #9aa8ba;
+  cursor: not-allowed;
+}
+
+button:hover:not(:disabled) {
+  background: #24558c;
+}
+
+.notice {
+  padding: 12px 16px;
+  background: #e7f2ff;
+  color: #17365d;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.times {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.times > div {
+  padding: 14px;
+  border-radius: 10px;
+  background: #f3f6fb;
+}
+
+.times p {
+  font-size: 20px;
+  font-weight: bold;
+  margin-bottom: 0;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+th,
+td {
+  padding: 12px;
+  border-bottom: 1px solid #e0e7f0;
+  text-align: left;
+}
+
+th {
+  background: #f3f6fb;
+  color: #17365d;
+}
+
+footer {
+  text-align: center;
+  color: #65748a;
+  padding: 18px;
+  font-size: 13px;
+}
+
+@media (max-width: 480px) {
+  .container {
+    width: min(100% - 20px, 1000px);
+    padding-top: 14px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  h1 {
+    font-size: 23px;
+  }
+
+  .times {
+    gap: 8px;
+  }
+}
