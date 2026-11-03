@@ -1,0 +1,402 @@
+
+import React, { useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { supabase, isConfigured } from './supabase';
+import './styles.css';
+
+const today = () =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+
+const time = value =>
+  value
+    ? new Date(value).toLocaleTimeString('en-PH', {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    : '—';
+
+function App() {
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [signup, setSignup] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [studentId, setStudentId] = useState('');
+  const [company, setCompany] = useState('');
+  const [records, setRecords] = useState([]);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState('pending');
+
+  useEffect(() => {
+    if (!isConfigured) return;
+    supabase.auth.getSession().then(({ data }) =>
+      setSession(data.session)
+    );
+    const { data } = supabase.auth.onAuthStateChange(
+      (_, session) => setSession(session)
+    );
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setProfile(null);
+      setRecords([]);
+      return;
+    }
+    loadProfile();
+  }, [session?.user?.id]);
+
+  async function loadProfile() {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single();
+
+    if (error) {
+      setNote('Could not load profile: ' + error.message);
+      return;
+    }
+
+    setProfile(data);
+    setName(data.full_name || '');
+    setStudentId(data.student_id || '');
+    setCompany(data.host_company || '');
+  }
+
+  async function loadRecords() {
+    if (!profile) return;
+
+    let query = supabase
+      .from('attendance_days')
+      .select(
+        '*, profiles!attendance_days_student_id_fkey(full_name, student_id, host_company)'
+      )
+      .order('work_date', { ascending: false });
+
+    if (!['admin', 'supervisor'].includes(profile.role)) {
+      query = supabase
+        .from('attendance_days')
+        .select('*')
+        .eq('student_id', profile.id)
+        .order('work_date', { ascending: false });
+    } else if (filter !== 'all') {
+      query = query.eq('status', filter);
+    }
+
+    const { data, error } = await query;
+    if (error) setNote(error.message);
+    else setRecords(data || []);
+  }
+
+  useEffect(() => {
+    if (profile) loadRecords();
+  }, [profile?.id, profile?.role, filter]);
+
+  async function authenticate(e) {
+    e.preventDefault();
+    setBusy(true);
+    setNote('');
+
+    try {
+      if (signup) {
+        const { error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              full_name: name.trim(),
+              student_id: studentId.trim(),
+              host_company: company.trim()
+            }
+          }
+        });
+        if (error) throw error;
+        setNote('Account created. Verify your email if requested, then sign in.');
+        setSignup(false);
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password
+        });
+        if (error) throw error;
+      }
+    } catch (error) {
+      setNote(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function punch() {
+    setBusy(true);
+    setNote('');
+
+    try {
+      let row = records.find(r => r.work_date === today());
+
+      if (!row) {
+        const { data, error } = await supabase
+          .from('attendance_days')
+          .insert({
+            student_id: profile.id,
+            work_date: today(),
+            status: 'pending'
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        row = data;
+      }
+
+      if (row.status === 'approved') {
+        throw new Error('This DTR is already approved.');
+      }
+
+      const steps = ['check_in', 'break_out', 'break_in', 'check_out'];
+      const labels = ['Check In', 'Break Out', 'Break In', 'Check Out'];
+      const index = steps.findIndex(key => !row[key]);
+
+      if (index < 0) throw new Error('All four entries are complete.');
+
+      const { error } = await supabase
+        .from('attendance_days')
+        .update({
+          [steps[index]]: new Date().toISOString(),
+          status: 'pending',
+          reviewed_by: null,
+          reviewed_at: null,
+          supervisor_note: null
+        })
+        .eq('id', row.id);
+
+      if (error) throw error;
+      setNote(labels[index] + ' recorded successfully.');
+      await loadRecords();
+    } catch (error) {
+      setNote(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveProfile(e) {
+    e.preventDefault();
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        full_name: name.trim(),
+        student_id: studentId.trim(),
+        host_company: company.trim()
+      })
+      .eq('id', profile.id);
+
+    setNote(error ? error.message : 'Profile updated.');
+    if (!error) loadProfile();
+  }
+
+  async function review(row, status) {
+    const { error } = await supabase
+      .from('attendance_days')
+      .update({
+        status,
+        supervisor_note: row.editNote || null,
+        reviewed_by: session.user.id,
+        reviewed_at: new Date().toISOString()
+      })
+      .eq('id', row.id);
+
+    setNote(error ? error.message : 'DTR ' + status + '.');
+    if (!error) loadRecords();
+  }
+
+  function exportCSV() {
+    const headings = [
+      'Date', 'Student', 'Student ID', 'Company',
+      'Check In', 'Break Out', 'Break In', 'Check Out',
+      'Status', 'Supervisor Note'
+    ];
+
+    const lines = records.map(r => [
+      r.work_date,
+      r.profiles?.full_name || profile.full_name,
+      r.profiles?.student_id || profile.student_id,
+      r.profiles?.host_company || profile.host_company,
+      r.check_in, r.break_out, r.break_in, r.check_out,
+      r.status, r.supervisor_note
+    ]);
+
+    const csv = [headings, ...lines]
+      .map(row =>
+        row.map(v =>
+          '"' + String(v ?? '').replaceAll('"', '""') + '"'
+        ).join(',')
+      ).join('\r\n');
+
+    const url = URL.createObjectURL(
+      new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    );
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ojt-dtr-' + today() + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  if (!isConfigured) {
+    return <main className="container">
+      <h1>OJT Attendance · DTR</h1>
+      <p>Supabase setup is required before using the website.</p>
+    </main>;
+  }
+
+  if (!session) {
+    return <main className="container">
+      <h1>OJT Attendance · DTR</h1>
+      <p>Daily Time Record portal</p>
+      {note && <p className="notice">{note}</p>}
+      <form onSubmit={authenticate} className="panel">
+        <h2>{signup ? 'Create trainee account' : 'Sign in'}</h2>
+        {signup && <>
+          <label>Full name</label>
+          <input required value={name} onChange={e => setName(e.target.value)} />
+          <label>Student ID</label>
+          <input required value={studentId} onChange={e => setStudentId(e.target.value)} />
+          <label>Host company</label>
+          <input required value={company} onChange={e => setCompany(e.target.value)} />
+        </>}
+        <label>Email address</label>
+        <input required type="email" value={email} onChange={e => setEmail(e.target.value)} />
+        <label>Password</label>
+        <input required minLength="8" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+        <button disabled={busy}>{busy ? 'Please wait…' : signup ? 'Create account' : 'Sign in'}</button>
+        <p>
+          <button type="button" onClick={() => setSignup(!signup)}>
+            {signup ? 'Already registered? Sign in' : 'New trainee? Create account'}
+          </button>
+        </p>
+      </form>
+    </main>;
+  }
+
+  if (!profile) return <main className="container">Loading profile…</main>;
+
+  const reviewer = ['admin', 'supervisor'].includes(profile.role);
+  const current = records.find(r => r.work_date === today());
+  const keys = ['check_in', 'break_out', 'break_in', 'check_out'];
+  const labels = ['Check In', 'Break Out', 'Break In', 'Check Out'];
+  const next = keys.findIndex(key => !current?.[key]);
+
+  return <main className="container">
+    <header className="panel">
+      <h1>OJT Attendance · DTR</h1>
+      <p>Welcome, {profile.full_name || session.user.email}</p>
+      <p>{new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</p>
+      <button onClick={() => supabase.auth.signOut()}>Sign out</button>
+    </header>
+
+    {note && <p className="notice">{note}</p>}
+
+    <section className="panel">
+      <h2>Trainee details</h2>
+      <form onSubmit={saveProfile}>
+        <label>Full name</label>
+        <input required value={name} onChange={e => setName(e.target.value)} />
+        <label>Student ID</label>
+        <input value={studentId} onChange={e => setStudentId(e.target.value)} />
+        <label>Host company</label>
+        <input required value={company} onChange={e => setCompany(e.target.value)} />
+        <button>Save details</button>
+      </form>
+      <p>Account role: {profile.role}</p>
+    </section>
+
+    {!reviewer ? <>
+      <section className="panel">
+        <h2>Today's attendance · {today()}</h2>
+        <div className="times">
+          {keys.map((key, i) => <div key={key}>
+            <strong>{labels[i]}</strong>
+            <p>{time(current?.[key])}</p>
+          </div>)}
+        </div>
+        <button
+          disabled={busy || next < 0 || current?.status === 'approved'}
+          onClick={punch}
+        >
+          {busy ? 'Please wait…' : next < 0 ? 'All entries complete' : labels[next]}
+        </button>
+        <button onClick={loadRecords}>Refresh</button>
+        <h2>Attendance history</h2>
+        <button onClick={exportCSV}>Export CSV</button>
+      </section>
+      <AttendanceTable rows={records} />
+    </> : <>
+      <section className="panel">
+        <h2>Supervisor review</h2>
+        <label>Filter records</label>
+        <select value={filter} onChange={e => setFilter(e.target.value)}>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+          <option value="all">All</option>
+        </select>
+        <button onClick={loadRecords}>Refresh</button>
+        <button onClick={exportCSV}>Export CSV</button>
+      </section>
+      {records.map(row => <section className="panel" key={row.id}>
+        <h3>{row.profiles?.full_name || 'Student'}</h3>
+        <p>{row.profiles?.student_id} · {row.profiles?.host_company}</p>
+        <p>{row.work_date} · {row.status}</p>
+        {keys.map((key, i) => <p key={key}>{labels[i]}: {time(row[key])}</p>)}
+        <label>Supervisor note</label>
+        <textarea
+          value={row.editNote ?? row.supervisor_note ?? ''}
+          onChange={e => setRecords(old => old.map(r =>
+            r.id === row.id ? { ...r, editNote: e.target.value } : r
+          ))}
+        />
+        {row.status !== 'approved' && <>
+          <button onClick={() => review(row, 'approved')}>Approve</button>
+          <button onClick={() => review(row, 'rejected')}>Reject</button>
+        </>}
+      </section>)}
+    </>}
+
+    <footer>OJT Attendance · Daily Time Record</footer>
+  </main>;
+}
+
+function AttendanceTable({ rows }) {
+  if (!rows.length) return <section className="panel">No attendance records yet.</section>;
+
+  return <section className="panel">
+    <div className="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Check In</th><th>Break Out</th>
+          <th>Break In</th><th>Check Out</th><th>Status</th>
+        </tr></thead>
+        <tbody>{rows.map(row => <tr key={row.id}>
+          <td>{row.work_date}</td>
+          <td>{time(row.check_in)}</td>
+          <td>{time(row.break_out)}</td>
+          <td>{time(row.break_in)}</td>
+          <td>{time(row.check_out)}</td>
+          <td>{row.status}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </section>;
+}
+
+createRoot(document.getElementById('root')).render(<App />);
